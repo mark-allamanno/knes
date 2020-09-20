@@ -1,0 +1,18 @@
+.root {
+    -fx-base: #080808;
+    -fx-accent: #7413D4;
+}
+
+.menu-bar {
+    -fx-background-color: #454545;
+    -fx-font-size: 12px;
+}
+
+.context-menu {
+    -fx-background-color: #1F2326;
+}
+
+.label {
+    -fx-text-fill: white;
+}
+

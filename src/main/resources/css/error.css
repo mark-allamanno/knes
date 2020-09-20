@@ -1,0 +1,33 @@
+.root {
+    -fx-base: #080808;
+}
+
+.dialog-pane .header-panel {
+    -fx-background-color: #454545;
+}
+
+.text-area {
+    -fx-text-fill: white;
+}
+
+.text-area .content {
+    -fx-background-color: #1F2326;
+}
+
+.button {
+    -fx-accent: #7413D4;
+}
+
+.dialog-pane .button {
+    -fx-background-color: #7413D4;
+    -fx-text-fill: white;
+}
+
+.dialog-pane .button:hover {
+    -fx-background-color: #8537D4;
+    -fx-text-fill: white;
+}
+
+.dialog-pane > .button-bar > .container > .details-button {
+    -fx-text-fill: white;
+}
