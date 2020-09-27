@@ -49,6 +49,7 @@ class MainWindow : Application() {
     }
 
     companion object {
+        // The current mapping of the keys - just for testing!
         private val inputMappings = arrayOf(KeyCode.RIGHT, KeyCode.LEFT, KeyCode.DOWN, KeyCode.UP,  KeyCode.R, KeyCode.E,
                 KeyCode.W, KeyCode.Q)
         // A simple helper class to allow us to render the current ppu frame to the screen efficiently
@@ -81,10 +82,15 @@ class MainWindow : Application() {
                 val mask = if (key.code == inputMappings[i]) 2.0.pow(i).toInt() else 0
                 state = (state or mask)
             }
-            println(nes.controllerState)
             nes.controllerState = state
-
-
+        }
+        scene.addEventHandler(KeyEvent.KEY_RELEASED) { key ->
+            var state = 0xff
+            for (i in inputMappings.indices) {
+                val mask = if (key.code == inputMappings[i]) 2.0.pow(i).toInt() else 0
+                state = (state and mask)
+            }
+            nes.controllerState = nes.controllerState and state
         }
         // Set the cosmetics of the primary stage ie title, icon, etc and how it
         primaryStage.title = "NES Emulator"

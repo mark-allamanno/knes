@@ -22,6 +22,7 @@ class NES(private val mainWindow: MainWindow) : Runnable {
     private lateinit var timer: ScheduledExecutorService        // The timer that will continuously execute our system cycle code
 
     companion object {
+        // The standard nes palette given by -> https://wiki.nesdev.com/w/index.php/PPU_palettes
         val palette = mapOf(
                 0x00 to Triple(84, 84, 84),
                 0x01 to Triple(0, 30, 116),

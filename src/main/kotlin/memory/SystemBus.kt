@@ -48,7 +48,6 @@ class SystemBus(private val nes: NES) {
             system[address] = ((system[address].toInt() shl 1) and 0xff).toByte()
             return msb
         }
-
         else {
             // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
             return when (address) {
@@ -64,9 +63,9 @@ class SystemBus(private val nes: NES) {
     }
 
     fun cpuWriteByte(address: Int, value: Int) {
-        if (address in 0x4016..0x4017)
+        if (address in 0x4016..0x4017) {
             system[address] = nes.controllerState.toByte()
-        else {
+        } else {
             // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
             when (address) {
                 in 0x8000..0x10000 -> {
@@ -74,7 +73,7 @@ class SystemBus(private val nes: NES) {
                     system[mapped] = value.toByte()
                 }
                 in 0x800..0x1fff -> system[address and 0x7ff] = value.toByte()
-                in 0x2000..0x4000 -> nes.ppu.writeRegister(address, value)
+                in 0x2000..0x3fff -> nes.ppu.writeRegister(address, value)
                 else -> system[address] = value.toByte()
             }
         }
