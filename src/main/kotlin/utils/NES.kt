@@ -15,7 +15,8 @@ class NES(private val mainWindow: MainWindow) : Runnable {
 
     val system = SystemBus(this)                            // The system memory for the NES
     val cpu = CPU(system)                                       // The system CPU for the NES
-    val ppu = PPU(system, this)                             // The system PPU for the NES
+    val ppu = PPU(system)                                       // The system PPU for the NES
+    var controllerState = 0
     lateinit var cartridge: Cartridge                           // The currently inserted cartridge for the NES system
     private val logger = Logger(this)                       // The logger class that enables us to write to a log file
     private lateinit var timer: ScheduledExecutorService        // The timer that will continuously execute our system cycle code

@@ -12,6 +12,8 @@ import javafx.scene.Scene
 import javafx.scene.canvas.Canvas
 import javafx.scene.control.*
 import javafx.scene.image.Image
+import javafx.scene.input.KeyCode
+import javafx.scene.input.KeyEvent
 import javafx.scene.layout.BorderPane
 import javafx.scene.layout.Priority
 import javafx.scene.layout.VBox
@@ -20,7 +22,9 @@ import javafx.stage.FileChooser
 import javafx.stage.Stage
 import utils.NES
 import utils.NESException
+import kotlin.math.pow
 import kotlin.system.exitProcess
+
 
 class MainWindow : Application() {
 
@@ -39,10 +43,14 @@ class MainWindow : Application() {
                 FileChooser.ExtensionFilter("All Files", "*")
         )
         browser.title = "Please Choose the Rom to Emulate"
+        canvas.graphicsContext2D.isImageSmoothing = false
+        // Start rendering to the main canvas
         render.start()
     }
 
     companion object {
+        private val inputMappings = arrayOf(KeyCode.RIGHT, KeyCode.LEFT, KeyCode.DOWN, KeyCode.UP,  KeyCode.R, KeyCode.E,
+                KeyCode.W, KeyCode.Q)
         // A simple helper class to allow us to render the current ppu frame to the screen efficiently
         class RenderFrame(private val canvas: Canvas, private val nes: NES) : AnimationTimer() {
             override fun handle(now: Long) {
@@ -52,8 +60,8 @@ class MainWindow : Application() {
     }
 
     override fun start(primaryStage: Stage) {
-        primaryStage.widthProperty().addListener { _, _, _ -> resizeChildren(primaryStage) }
-        primaryStage.heightProperty().addListener { _, _, _ -> resizeChildren(primaryStage) }
+        primaryStage.widthProperty().addListener { _, _, _ -> canvas.widthProperty().set(primaryStage.width) }
+        primaryStage.heightProperty().addListener { _, _, _ -> canvas.heightProperty().set(primaryStage.height) }
         // Create a new menubar for the application and initialize its sub menus
         val menuBar = MenuBar()
         initFileMenus(menuBar, primaryStage)
@@ -67,10 +75,21 @@ class MainWindow : Application() {
         // Create and set a new scene for the primary stage of the app
         val scene = Scene(layout, 1000.0, 700.0)
         primaryStage.scene = scene
+        scene.addEventHandler(KeyEvent.KEY_PRESSED) { key ->
+            var state = 0
+            for (i in inputMappings.indices) {
+                val mask = if (key.code == inputMappings[i]) 2.0.pow(i).toInt() else 0
+                state = (state or mask)
+            }
+            println(nes.controllerState)
+            nes.controllerState = state
+
+
+        }
         // Set the cosmetics of the primary stage ie title, icon, etc and how it
         primaryStage.title = "NES Emulator"
         primaryStage.icons.add(Image("nes.png"))
-        // primaryStage.scene.stylesheets.add("css/main.css")
+        primaryStage.scene.stylesheets.add("css/main.css")
         primaryStage.onCloseRequest = EventHandler { Platform.exit() }
         primaryStage.show()
         // Invoke the garbage collector to clean up the startup drama of javafx. Releases ~30mb to system
@@ -139,12 +158,6 @@ class MainWindow : Application() {
         // Add the item to the debug sub menu and add all sub menus to the menubar
         debugMenu.items.addAll(showCPU, showPPU, showNameTable)
         menuBar.menus.addAll(debugMenu)
-    }
-
-    private fun resizeChildren(primaryStage: Stage) {
-        // Then scale the canvas to contain all empty space
-        canvas.widthProperty().set(primaryStage.width)
-        canvas.heightProperty().set(primaryStage.height)
     }
 
     private fun createDebugWindow(oldWindow: DebugWindow?, newWindow: DebugWindow) {

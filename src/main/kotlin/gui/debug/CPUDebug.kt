@@ -18,7 +18,7 @@ class CPUDebug(nes: NES) : DebugWindow(nes) {
     private val labelContainer = VBox()                 // A sub layout for the main layout to manage the labels
     private val cpuLabels = arrayOf(
             Label("Program Counter: ${Integer.toHexString(nes.cpu.pc)}"),
-            Label("Opcode: ${Integer.toHexString(nes.cpu.op)}"),
+            Label("Opcode: ${Integer.toHexString(nes.cpu.opcodeKey)}"),
             Label("Accumulator: ${Integer.toHexString(nes.cpu.regA)}"),
             Label("Register X: ${Integer.toHexString(nes.cpu.regX)}"),
             Label("Register Y: ${Integer.toHexString(nes.cpu.regY)}"),
@@ -66,7 +66,7 @@ class CPUDebug(nes: NES) : DebugWindow(nes) {
         // Make a new array of strings that we will use to update the labels
         val strings = arrayOf(
                 "Program Counter: ${Integer.toHexString(nes.cpu.pc)}",
-                "Opcode: ${Integer.toHexString(nes.cpu.op)}",
+                "Opcode: ${Integer.toHexString(nes.cpu.opcodeKey)}",
                 "Accumulator: ${Integer.toHexString(nes.cpu.regA)}",
                 "Register X: ${Integer.toHexString(nes.cpu.regX)}",
                 "Register Y: ${Integer.toHexString(nes.cpu.regY)}",

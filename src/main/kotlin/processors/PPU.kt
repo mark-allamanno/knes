@@ -1,83 +1,218 @@
 package processors
 
 import javafx.scene.image.WritableImage
+import javafx.scene.paint.Color
 import memory.SystemBus
 import utils.NES
 import kotlin.math.pow
 
 
-class PPU(private val graphics: SystemBus, private val nes: NES) {
+class PPU(private val graphics: SystemBus) {
 
     val control = ControlRegister()
     private val mask = MaskRegister()
     private val status = StatusRegisterPPU()
     private var vRamAddress = VRamAddress()
     private var tRamAddress = VRamAddress()
-    private var fineXScroll = 0
+    private var shiftRegister = ShiftRegister()
+    private var tilePixel = 0
     private var writeLatch = true
     private var readBuffer = 0
-    private var scanline = -1
+    private var scanline = 261
     private var scanlinePixel = 1
     var emitNMI = false
     var frame = WritableImage(256, 240)
 
     fun emulateCycle() {
+        if (scanline in 0 until 240 || scanline == 261) {
+            // On every visible scanline and the pre-render scanline load the new name
+            // table info and check the loopy registers
+            fetchNameTableInfo()
+            updateLoopyRegisters()
+        }
+        // Then draw the current pixel of the shift register and progress the scanline counters
+        drawFramePixel()
+        progressScanline()
+    }
+
+    // All of the bitwise stuff in this section is lifted from the wiki: https://wiki.nesdev.com/w/index.php/PPU_scrolling
+    private fun fetchNameTableInfo() {
+        // Make sure we are wither in a visible scanline or fetching the first two tiles for the next frame
+        if (scanlinePixel in 1 until 256 || scanlinePixel in 321 until 337) {
+            // Always shift the registers when we do this
+            shiftRegister.shiftRegisterBits()
+            // A tile is 8 pixels wide and we are using NTSC timings for rendering so we need to check what pixel
+            // we are on in that tile
+            when (scanlinePixel % 8) {
+
+                0 -> {
+                    // If we are on a multiple of 8 then we just started a new tile so increment the tile pointer
+                    if (scanlinePixel != 0 && (mask.showBackground || mask.showSprites))
+                        vRamAddress.tileX++
+                    // If the tile pointer has crossed the name table boundary then let us know and reset the pointer
+                    if (31 < vRamAddress.tileX) {
+                        vRamAddress.tileX = 0
+                        vRamAddress.nameTableX = if (vRamAddress.nameTableX == 0) 1 else 0
+                    }
+                }
+
+                1 -> {
+                    // If we are on pixel 1 of the tile then we need to get the location of the pattern table we are rendering
+                    shiftRegister.patternTableID = graphics.ppuReadByte(0x2000 + (vRamAddress.encode() and 0xfff))
+                }
+
+                3 -> {
+                    // If we are on the third pixel of a tile then we need to do some bitwise tricks explained in the wiki
+                    // linked above to get the palette for the pattern table
+                    val registerVal = vRamAddress.encode()
+                    val bitwiseTrick = 0x23c0 or (registerVal and 0xc00) or ((registerVal ushr 4) and 0x38) or ((registerVal ushr 2) and 0x7)
+                    shiftRegister.attributeTableByte = graphics.ppuReadByte(bitwiseTrick)
+                }
+
+                5 -> {
+                    // If we are on pixel 5 then we need to get the least significant byte from the pattern table scanline
+                    val backgroundOffset = if (control.backgroundTable) 4096 else 0
+                    shiftRegister.patternTableLSB = graphics.ppuReadByte(backgroundOffset +
+                            (shiftRegister.patternTableID * 16) + vRamAddress.tileScanline)
+                }
+
+                7 -> {
+                    // If we are on pixel 7 then we need to get the most significant byte from the pattern table scanline
+                    val backgroundOffset = if (control.backgroundTable) 4096 else 0
+                    shiftRegister.patternTableMSB = graphics.ppuReadByte(backgroundOffset +
+                            (shiftRegister.patternTableID * 16) + vRamAddress.tileScanline + 8)
+                    // Then we are done loading this tile's scanline and can load it into the register
+                    shiftRegister.loadNextTile()
+                }
+            }
+        }
+    }
+
+    private fun updateLoopyRegisters() {
+        // If we are on pixel 256 of a scanline then NTSC tells us we need to increment the vertical component of the
+        // loopy register
+        if (scanlinePixel == 256 && (mask.showBackground || mask.showSprites)) {
+            // If we are on the 7th scanline of a tile then we have finished that tile
+            if (7 == vRamAddress.tileScanline) {
+                // So we move to the next tile in the name table and reset the scanline
+                vRamAddress.tileY = vRamAddress.tileY + 1
+                vRamAddress.tileScanline = 0
+                // However if we are moving to another name table then reset the tileY and flip the name table
+                if (29 < vRamAddress.tileY) {
+                    vRamAddress.tileY = 0
+                    vRamAddress.nameTableY = if (vRamAddress.nameTableY == 0) 1 else 0
+                }
+            }
+            // Otherwise we are still using this tile on the next scanline
+            else {
+                vRamAddress.tileScanline++
+            }
+        }
+        // If we are on scanline 257 then we need to 'scroll' the current address pointer to the temp one that has
+        // changed but only in the x direction
+        if (scanlinePixel == 257) {
+            if (mask.showBackground || mask.showSprites) {
+                vRamAddress.nameTableX = tRamAddress.nameTableX
+                vRamAddress.tileX = tRamAddress.tileX
+            }
+        }
+        // If we are on the pre-render scanline then we need to 'scroll' the current address pointer to the temp one
+        // that has changed, now in the y direction
+        if (scanline == 261 && scanlinePixel in 280 until 305 && (mask.showBackground || mask.showSprites)) {
+            vRamAddress.nameTableY = tRamAddress.nameTableY
+            vRamAddress.tileY = tRamAddress.tileY
+            vRamAddress.tileScanline = tRamAddress.tileScanline
+        }
+    }
+
+    private fun drawFramePixel() {
+        if (scanlinePixel in 0 until 256 && scanline in 0 until 240) {
+            // If we are on the visible part of the frame and rendering background then draw the background pixel
+            if (mask.showBackground) {
+                // Do this by first getting the palette and pixel from the shift register
+                val palette = shiftRegister.getCurrentPalette(tilePixel)
+                val bitPlane = shiftRegister.getCurrentPixel(tilePixel)
+                // We then plug those into the nes palette to get our color and set the pixel!
+                val (r, g, b) = NES.palette[readPalette(palette, bitPlane)] ?: Triple(0, 0, 0)
+                frame.pixelWriter.setColor(scanlinePixel, scanline, Color.rgb(r, g, b))
+            }
+        }
+    }
+
+    private fun progressScanline() {
         // We have entered the vertical blank, so let the CPU know. Optionally we can emit an NMI if it is enabled
         if (scanline == 241 && scanlinePixel == 1) {
             status.vBlank = true
             emitNMI = control.enableNMI
         }
         // We have exited the vertical blank so let the CPU know
-        else if (scanline == 261 && scanlinePixel == 1)
+        else if (scanline == 261 && scanlinePixel == 1) {
             status.vBlank = false
-
+        }
+        // If we are at pixel 341 in a row then we are done with that scanline
         if (scanlinePixel == 341) {
-
+            // Increment the scanline and reset the pixel counter
             scanline++
             scanlinePixel = -1
-
+            // If we are at scanline 262 then we are at the prerender scanline
             if (scanline == 262)
-                scanline = -1
+                scanline = 0
         }
-
+        // Always increment the scanline pixel
         scanlinePixel++
     }
 
     fun writeRegister(address: Int, value: Int) {
-        when (address and 0x7) {
+        // When we write to an address $2000-$2007 then we are actually writing to the PPU registers
+        when (address % 8) {
 
             0 -> {
+                // We first decode the value into the control register and then set the name table bits in the loopy
+                // t register
                 control.decode(value)
                 tRamAddress.nameTableX = (value and 0x1)
                 tRamAddress.nameTableY = (value and 0x2) ushr 1
             }
 
-            1 -> mask.decode(value)
+            1 -> {
+                // This one is simple we just decode the value into the register!
+                mask.decode(value)
+            }
 
             5 -> {
                 if (writeLatch) {
-                    tRamAddress.courseX = (value ushr 3) and 0xff
-                    fineXScroll = (value and 0x7)
-                } else {
-                    tRamAddress.fineY = (value and 0x7)
-                    tRamAddress.courseY = (value and 0xf8) ushr 3
+                    // If we are on the first write of $2005 then we set the x location of the tile and the pixel in
+                    // that tile to start with
+                    tRamAddress.tileX = (value and 0xf8) ushr 3
+                    tilePixel = (value and 0x7)
                 }
-
+                else {
+                    // On the second write we set the y location of the tile and the scanline we are at on that tile
+                    tRamAddress.tileY = (value and 0xf8) ushr 3
+                    tRamAddress.tileScanline = (value and 0x7)
+                }
+                // Always invert the write latch after an operation
                 writeLatch = !writeLatch
             }
 
             6 -> {
                 if (writeLatch) {
-                    tRamAddress.decodeRange(8, 15, (value and 0x3f) shl 8)
-                } else {
-                    tRamAddress.decodeRange(0, 7, value and 0xff)
+                    // On the first write to $2006 we just decode the high 6 bits of the value into the loopy t register
+                    tRamAddress.decodeRange(6, 8, value and 0x3f)
+                }
+                else {
+                    // On the second write though we decode the lower 8 bits into the register and then load the loopy
+                    // v register with the loopy t register
+                    tRamAddress.decodeRange(8, 0, value and 0xff)
                     vRamAddress.decode(tRamAddress.encode())
                 }
-
+                // Always invert the write latch after an operation
                 writeLatch = !writeLatch
             }
 
             7 -> {
+                // When the CPU writes to $2007 then we actually just write to the graphics RAM the value at the v
+                // ram address and increment the v register by an amount decoded by the control register
                 graphics.ppuWriteByte(vRamAddress.encode(), value)
                 vRamAddress += if (control.vramIncrement) 32 else 1
             }
@@ -85,27 +220,32 @@ class PPU(private val graphics: SystemBus, private val nes: NES) {
     }
 
     fun readRegister(address: Int): Int {
+        // We are reading from $2000-$2007 so we need ot return the values of the registers that can be read from
         return when (address and 0x7) {
 
             2 -> {
-                // When reading from #2002 we
+                // When reading from #2002 we bit the high bits in and fill the low 5 with noise (apparently factual)
                 val state = (status.encode() and 0xe0) or (readBuffer and 0x1f)
+                // Reading also resets from flags
                 status.vBlank = false
                 writeLatch = true
                 return state
             }
 
             7 -> {
+                // A read from the PPU actually tasks 2 CPU cycles so we need to buffer then in a variable and then
+                // increment the loopy v register
                 val value = readBuffer
                 readBuffer = graphics.ppuReadByte(vRamAddress.encode())
                 vRamAddress += if (control.vramIncrement) 32 else 1
                 return value
             }
-
+            // Otherwise just return 0 as it is an illegal access
             else -> 0
         }
     }
 
+    // How pattern tables are stored in memory -> https://wiki.nesdev.com/w/index.php/PPU_pattern_tables
     fun readPatternTable(address: Int): Array<Array<Int>> {
         // Create the arrays for the msb, lsb, and resulting bit planes
         val bitPlaneLSB = Array(8) { graphics.ppuReadByte(address + it) }
@@ -126,22 +266,24 @@ class PPU(private val graphics: SystemBus, private val nes: NES) {
         return result       // Then return the resulting 8x8 array
     }
 
-    fun readPalette(palette: Int, pixel: Int): Int {
-        return graphics.ppuReadByte(0x3f00 + (4 * palette) + pixel)
+    fun readPalette(palette: Int, bitPlane: Int): Int {
+        // Read the palette from the graphics memory, palettes start at 0x3f00 and there are 4 colors to a palette
+        return graphics.ppuReadByte(0x3f00 + (4 * palette) + bitPlane)
     }
 
     fun reset() {
-
+        // Reset all of the registers for the PPU
         control.reset()
         mask.reset()
         status.reset()
-
+        // Reset the vram address pointers
         vRamAddress = VRamAddress()
         tRamAddress = VRamAddress()
+        // Reset the read buffer and the write latch
         readBuffer = 0
         writeLatch = true
-
-        scanline = -1
-        scanlinePixel = 1
+        // Finally reset the scanline and pixel counters
+        scanline = 261
+        scanlinePixel = -1
     }
 }

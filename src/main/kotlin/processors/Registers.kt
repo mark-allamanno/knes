@@ -7,25 +7,26 @@ abstract class Register(registerSize: Int) {
     protected val binaryRepresentation = Array(registerSize) { false }
 
     fun encode(): Int {
+        // Iterate over all of the boolean values and use the formula 2 ^ (bool index) to convert the bool to an int and
+        // merge it with the resulting value until we are done
         var result = 0
         for (i in binaryRepresentation.indices) {
             val num = if (binaryRepresentation[i]) (2.0).pow(i).toInt() else 0
             result = result or num
         }
-        // The binary encoding of the registers flags
         return result
     }
 
     fun decode(value: Int) {
+        // To decode a value we just use a mask of 2 ^ (bool index) to check if the bit is a 1 or a zero
         for (i in binaryRepresentation.indices) {
-            // Then use the index to get the corresponding mask and if that but is set than set the field
             val mask = (2.0).pow(i).toInt()
             binaryRepresentation[i] = (value and mask) != 0
         }
     }
 
     open fun reset() {
-        binaryRepresentation.fill(false)
+        binaryRepresentation.fill(false)    // On reset default is just setting all values to zero
     }
 }
 
@@ -131,19 +132,6 @@ class ControlRegister : Register(8) {
         set(value) {
             binaryRepresentation[7] = value
         }
-
-    fun baseNameTableAddress(): Int {
-
-        val lsb = if (nameTableLSB) 1 else 0
-        val msb = if (nameTableMSB) 2 else 0
-
-        return when (msb + lsb) {
-            0 -> 0x2000
-            1 -> 0x2400
-            2 -> 0x2800
-            else -> 0x2c00
-        }
-    }
 }
 
 class MaskRegister : Register(8) {
@@ -218,45 +206,98 @@ class StatusRegisterPPU : Register(8) {
         }
 }
 
-class VRamAddress : Register(16) {
+class VRamAddress : Register(15) {
 
-    internal var courseX: Int
+    internal var tileX: Int
         get() = encodeRange(0, 4)
-        set(value) = decodeRange(0, 4, value)
+        set(value) = decodeRange(5, 0, value)
 
-    internal var courseY: Int
-        get() = encodeRange(5, 9) ushr 5
-        set(value) = decodeRange(5, 9, value)
+    internal var tileY: Int
+        get() = encodeRange(5, 9)
+        set(value) = decodeRange(5, 5, value)
 
     internal var nameTableX: Int
-        get() = encodeRange(10, 10) ushr 10
-        set(value) = decodeRange(10, 10, value)
+        get() = encodeRange(10, 10)
+        set(value) = decodeRange(1, 10, value)
 
     internal var nameTableY: Int
-        get() = encodeRange(11, 11) ushr 11
-        set(value) = decodeRange(11, 11, value)
+        get() = encodeRange(11, 11)
+        set(value) = decodeRange(1, 11, value)
 
-    internal var fineY: Int
-        get() = encodeRange(12, 14) ushr 12
-        set(value) = decodeRange(12, 14, value)
+    internal var tileScanline: Int
+        get() = encodeRange(12, 14)
+        set(value) = decodeRange(3, 12, value)
 
     private fun encodeRange(start: Int, end: Int): Int {
+        // WHen we encode a value we iterate over the range specified and convert the boolean values to 2 ^ (bool index)
+        // to convert it to a number! We then or this with the result until we finish
         var value = 0
         for (i in start..end) {
             val num = if (binaryRepresentation[i]) 2.0.pow(i).toInt() else 0
             value = value or num
         }
-        return value
+        return (value ushr start)
     }
 
-    fun decodeRange(start: Int, end: Int, value: Int) {
-        for (i in start..end) {
+    fun decodeRange(range: Int, offset: Int, value: Int) {
+        // When we decode a range then simply iterate over the first n bits in a byte and check if they are one or zero
+        // However since this register is more complicated than the others if we say nameTableY = 1 we actually need to
+        // shift that '1' to the 11th bit in the number! So for that we use our offset
+        for (i in 0 until range) {
             val mask = 2.0.pow(i).toInt()
-            binaryRepresentation[i] = (value and mask) != 0
+            binaryRepresentation[i + offset] = (value and mask) != 0
         }
     }
 
     operator fun plusAssign(num: Int) {
-        decode(encode() + num)
+        decode(encode() + num)      // Define plus assign for easier syntax later
+    }
+}
+
+class ShiftRegister {
+
+    var patternTableID = 0
+    var attributeTableByte = 0
+    var patternTableLSB = 0
+    var patternTableMSB = 0
+
+    private var attributeLSBShift = 0
+    private var attributeMSBShift = 0
+    private var patternLSBShift = 0
+    private var patternMSBShift = 0
+
+    fun shiftRegisterBits() {
+        // Just shift all of the registers left by 1 and make sure there is no overflow!
+        attributeLSBShift = (attributeLSBShift shl 1) and 0xffff
+        attributeMSBShift = (attributeMSBShift shl 1) and 0xffff
+        patternLSBShift = (patternLSBShift shl 1) and 0xffff
+        patternMSBShift = (patternMSBShift shl 1) and 0xffff
+    }
+
+    fun loadNextTile() {
+        // When we load a new tile we split up the attribute byte into its lsb and msb
+        val lsb = if (attributeTableByte and 0x1 == 0) 0 else 0xff
+        val msb = if (attributeTableByte and 0x2 == 0) 0 else 0xff
+        // We then merge the lower byte of the shift registers with the new temp bytes we loaded
+        attributeLSBShift = (attributeLSBShift and 0xff00) or lsb
+        attributeMSBShift = (attributeMSBShift and 0xff00) or msb
+        patternLSBShift = (patternLSBShift and 0xff00) or (patternTableLSB and 0xff)
+        patternMSBShift = (patternMSBShift and 0xff00) or (patternTableMSB and 0xff)
+    }
+
+    fun getCurrentPalette(fineX: Int): Int {
+        val mask = 0x8000 ushr fineX
+        // Using a right shift we use a mask to get the msb and lsb of the attribute table from the shift registers
+        val lsb = if ((attributeLSBShift and mask) != 0) 1 else 0
+        val msb = if ((attributeMSBShift and mask) != 0) 2 else 0
+        return msb or lsb
+    }
+
+    fun getCurrentPixel(fineX: Int): Int {
+        val mask = 0x8000 ushr fineX
+        // Using a right shift we use a mask to get the msb and lsb of the but plane from the shift registers
+        val lsb = if ((patternLSBShift and mask) != 0) 1 else 0
+        val msb = if ((patternMSBShift and mask) != 0) 2 else 0
+        return msb or lsb
     }
 }

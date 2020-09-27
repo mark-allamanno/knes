@@ -5,32 +5,35 @@ import utils.IllegalOpcode
 
 class CPU(private val system: SystemBus) {
 
+    // Data class to store functions pointers and info about an opcode
     data class Opcode(val operation: () -> Unit, val address: () -> Int?, val cycles: Int)
 
-    var regA = 0
-    var regX = 0
-    var regY = 0
+    var regA = 0                                // The accumulator register
+    var regX = 0                                // The special x register
+    var regY = 0                                // The special y register
 
-    var sp = 0xfd
-    var pc = 0
-    var op = 0
+    var sp = 0xfd                               // The stack pointer
+    var pc = 0                                  // The program counter
+    var opcodeKey = 0                           // The raw opcode data, an unsigned byte
 
-    var stall = 0
-    var totalCycles = 0
+    var stall = 0                               // The amount of cycle to do no action to sync to PPU
+    var totalCycles = 0                         // The total cycles we have emulated
 
-    var address: Int? = 0
-    var opcodeLength = 0
-    var pageCrossed = false
+    var address: Int? = 0                       // The current address given by the opcodes addressing mode
+    var opcodeLength = 0                        // The length of the opcode anywhere from 1-3
+    var pageCrossed = false                     // Lets us know if a page was crossed during the operation
 
-    var operands = Array(0) { 0 }
-    lateinit var opcode: Opcode
+    var operands = Array(0) { 0 }           // The operands of the current opcode
+    lateinit var opcode: Opcode                 // The opcode data class that holds the addressing mode, function pointer, and cycles
 
-    val status = StatusRegisterCPU()
+    val status = StatusRegisterCPU()            // The status register that sets flags about the CPU operation
 
+    // A short array of functions that require an extra cycle if a page is crossed
     private val extraCycles = arrayOf(this::adc, this::and, this::cmp, this::eor, this::lda, this::ldx,
             this::ldy, this::ora, this::sbc
     )
 
+    // A map that links all opcode bytes to their data class counter parts
     private val opcodeMap = mapOf(
             0x69 to Opcode(this::adc, this::imm, 2),
             0x65 to Opcode(this::adc, this::zpi, 3),
@@ -220,16 +223,17 @@ class CPU(private val system: SystemBus) {
     )
 
     fun reset() {
+        // Reset all of the registers back to 0
         regA = 0
         regX = 0
         regY = 0
-
+        // Reset all of the pointers back to their default values
         sp = 0xfd
-        op = 0
+        opcodeKey = 0
         pc = system.cpuReadHalfWord(0xfffc)
-
+        // Reset the status registers
         status.reset()
-
+        // Reset the cycle counters as well
         totalCycles = 0
         stall = 7
     }
@@ -261,9 +265,9 @@ class CPU(private val system: SystemBus) {
     fun emulateCycle() {
         if (stall <= 0) {
             // Get the current opcode from the system memory
-            op = system.cpuReadByte(pc)
+            opcodeKey = system.cpuReadByte(pc)
             // Get the corresponding opcode class from the map
-            opcode = opcodeMap[op] ?: throw IllegalOpcode(op)
+            opcode = opcodeMap[opcodeKey] ?: throw IllegalOpcode(opcodeKey)
             // Then get the address from that class and log the CPU state before the instruction is executed
             address = opcode.address()
             // Execute the instruction
@@ -516,7 +520,7 @@ class CPU(private val system: SystemBus) {
 
     private fun jmp() {
         pc = address!!
-        stall += opcodeMap[op]!!.cycles
+        stall += opcodeMap[opcodeKey]!!.cycles
     }
 
     private fun brk() {
@@ -533,7 +537,7 @@ class CPU(private val system: SystemBus) {
     }
 
     private fun rti() {
-        val state = system.cpuReadByte(0x100 + sp + 1) + 1
+        val state = system.cpuReadByte(0x100 + sp + 1)
         status.decode(state)
         sp = (sp + 1) and 0xff
 
@@ -926,11 +930,11 @@ class CPU(private val system: SystemBus) {
     }
 
     private fun sbc() {
-        val operand = system.cpuReadByte(address!!)
-        val carry = if (status.carry) 0 else 1
-        val tmp = regA - operand - carry
+        val operand = system.cpuReadByte(address!!) xor 0xff
+        val carry = if (status.carry) 1 else 0
+        val tmp = regA + operand + carry
 
-        status.carry = 0 <= tmp
+        status.carry = (tmp and 0xff00) != 0
         status.zero = (tmp and 0xff) == 0
         status.overflow = ((regA xor operand) and 0x80) == 0 && ((tmp xor regA) and 0x80) != 0
         status.negative = (tmp ushr 7) == 1

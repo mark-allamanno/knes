@@ -22,7 +22,7 @@ class Logger(private val nes: NES) {
 
     fun logSystemState() {
         logger.info {
-            "${toHexString(nes.cpu.pc)} ${toHexString(nes.cpu.op)} ${operandsToString(nes.cpu.operands)}    " +
+            "${toHexString(nes.cpu.pc)} ${toHexString(nes.cpu.opcodeKey)} ${operandsToString(nes.cpu.operands)}    " +
                     "${nes.cpu.opcode.operation.toString().slice(10 until 13)} -> " +
                     "${nes.cpu.opcode.address.toString().slice(10 until 13)}    " +
                     "A:${toHexString(nes.cpu.regA)} X:${toHexString(nes.cpu.regX)} " +
