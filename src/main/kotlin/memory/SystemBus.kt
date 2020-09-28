@@ -5,11 +5,16 @@ import utils.NES
 
 class SystemBus(private val nes: NES) {
 
-    private var system = ByteArray(0x10000) { 0 }           // The kb of memory used by the CPU of the NES
-    private var graphics = ByteArray(0x4000) { 0 }          // The 4kb of memory used by the PPU of the NES
-    private lateinit var cartridge: Cartridge                   // The cartridge currently inserted into the system
-    var graphicsChange = false                                  // Lets us know if the sprite memory has been written to
-    var nameTableChange = false                                 // Lets us know if the name table memory has been written to
+    private var system = ByteArray(0x10000) { 0 }                   // The kb of memory used by the CPU of the NES
+    private var graphics = ByteArray(0x4000) { 0 }                  // The 4kb of memory used by the PPU of the NES
+    private lateinit var cartridge: Cartridge                           // The cartridge currently inserted into the system
+    private val oamData = Array(64) { ByteArray(4) { 0 } }
+    private var dmaAddress = 0
+    private var dmaLatch = true
+    private var dmaReadBuffer = 0
+    var spriteDMA = false
+    var graphicsChange = false                                          // Lets us know if the sprite memory has been written to
+    var nameTableChange = false                                         // Lets us know if the name table memory has been written to
 
     fun cpuReadHalfWord(address: Int): Int {
         // If no cartridge has been inserted then just return 0
@@ -17,8 +22,8 @@ class SystemBus(private val nes: NES) {
             return 0
         // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
         val mapped = when (address) {
-            in 0x8000..0x10000 -> cartridge.mapper.adjustProgramAddress(address)
             in 0x800..0x1fff -> address and 0x7ff
+            in 0x8000..0x10000 -> cartridge.mapper.adjustProgramAddress(address)
             else -> address
         }
         // Then we get the low and high bytes of the half word
@@ -30,52 +35,50 @@ class SystemBus(private val nes: NES) {
 
     fun cpuWriteHalfWord(address: Int, value: Int) {
         if (::cartridge.isInitialized) {
-                // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
-                val mapped = when (address) {
-                    in 0x8000..0x10000 -> cartridge.mapper.adjustProgramAddress(address)
-                    in 0x800..0x1fff -> address and 0x7ff
-                    else -> address
-                }
-                // Then we write the half word to that updated address
-                system[mapped] = (value ushr 8).toByte()
-                system[mapped - 1] = value.toByte()
+            // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
+            val mapped = when (address) {
+                in 0x800..0x1fff -> address and 0x7ff
+                in 0x8000..0x10000 -> cartridge.mapper.adjustProgramAddress(address)
+                else -> address
+            }
+            // Then we write the half word to that updated address
+            system[mapped] = (value ushr 8).toByte()
+            system[mapped - 1] = value.toByte()
         }
     }
 
     fun cpuReadByte(address: Int): Int {
-        if (address in 0x4016..0x4017) {
-            val msb = if (system[address].toInt() and 0x80 != 0) 1 else 0
-            system[address] = ((system[address].toInt() shl 1) and 0xff).toByte()
-            return msb
-        }
-        else {
-            // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
-            return when (address) {
-                in 0x8000..0x10000 -> {
-                    val mapped = cartridge.mapper.adjustProgramAddress(address)
-                    system[mapped].toInt() and 0xff
-                }
-                in 0x800..0x1fff -> system[address and 0x7ff].toInt() and 0xff
-                in 0x2000..0x4000 -> nes.ppu.readRegister(address)
-                else -> system[address].toInt() and 0xff
+        // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
+        return when (address) {
+            in 0x800..0x1fff -> system[address and 0x7ff].toInt() and 0xff
+            in 0x2000..0x4000 -> nes.ppu.readRegister(address)
+            in 0x4016..0x4017 -> {
+                val msb = if (system[address].toInt() and 0x80 != 0) 1 else 0
+                system[address] = ((system[address].toInt() shl 1) and 0xff).toByte()
+                return msb
             }
+            in 0x8000..0x10000 -> {
+                val mapped = cartridge.mapper.adjustProgramAddress(address)
+                system[mapped].toInt() and 0xff
+            }
+            else -> system[address].toInt() and 0xff
         }
     }
 
     fun cpuWriteByte(address: Int, value: Int) {
-        if (address in 0x4016..0x4017) {
-            system[address] = nes.controllerState.toByte()
-        } else {
-            // To get the correct address to write to we first need to make sure it isn't in a static mirror area or mapper area
-            when (address) {
-                in 0x8000..0x10000 -> {
-                    val mapped = cartridge.mapper.adjustProgramAddress(address)
-                    system[mapped] = value.toByte()
-                }
-                in 0x800..0x1fff -> system[address and 0x7ff] = value.toByte()
-                in 0x2000..0x3fff -> nes.ppu.writeRegister(address, value)
-                else -> system[address] = value.toByte()
+        when (address) {
+            in 0x8000..0x10000 -> {
+                val mapped = cartridge.mapper.adjustProgramAddress(address)
+                system[mapped] = value.toByte()
             }
+            in 0x4014..0x4014 -> {
+                dmaAddress = value * 0x100
+                spriteDMA = true
+            }
+            in 0x4016..0x4017 -> system[address] = nes.controllerState.toByte()
+            in 0x800..0x1fff -> system[address and 0x7ff] = value.toByte()
+            in 0x2000..0x3fff -> nes.ppu.writeRegister(address, value)
+            else -> system[address] = value.toByte()
         }
     }
 
@@ -110,6 +113,25 @@ class SystemBus(private val nes: NES) {
                 }
             }
         }
+    }
+
+    fun performDMA() {
+        // On the read cycle of the dma latch we just read the data pointed to byte the dmaAddress into the buffer and increment it
+        if (dmaLatch) {
+            dmaReadBuffer = system[dmaAddress].toInt() and 0xff
+            dmaAddress++
+        }
+        // On the write cycle we need to first reduce the actual address to just 0xff which we do with the modulo 0x100
+        // We then integer divide by 4 to get which tile we are reading into and then use modulo 4 to get which attrubute
+        // of the tile we are reading!
+        else {
+            val dmaProgress = dmaAddress % 0x100
+            oamData[dmaProgress / 4][dmaProgress % 4] = dmaReadBuffer.toByte()
+        }
+        // We always flip the latch after a read/write and the process is over when we have written all 256 bytes
+        // which means we are on 0xff of a page and are on the write stage (false) of the latch
+        dmaLatch = !dmaLatch
+        spriteDMA = (dmaAddress and 0xff) < 0xff || !dmaLatch
     }
 
     // How backgrounds are mirrored on the NES -> https://wiki.nesdev.com/w/index.php/PPU_nametables

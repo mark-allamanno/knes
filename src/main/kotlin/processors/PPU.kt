@@ -61,12 +61,22 @@ class PPU(private val graphics: SystemBus) {
                     shiftRegister.patternTableID = graphics.ppuReadByte(0x2000 + (vRamAddress.encode() and 0xfff))
                 }
 
+                // Attribute tables explained in greater detail here: https://wiki.nesdev.com/w/index.php/PPU_attribute_tables
                 3 -> {
-                    // If we are on the third pixel of a tile then we need to do some bitwise tricks explained in the wiki
-                    // linked above to get the palette for the pattern table
-                    val registerVal = vRamAddress.encode()
-                    val bitwiseTrick = 0x23c0 or (registerVal and 0xc00) or ((registerVal ushr 4) and 0x38) or ((registerVal ushr 2) and 0x7)
-                    shiftRegister.attributeTableByte = graphics.ppuReadByte(bitwiseTrick)
+                    val vRam = vRamAddress.encode()
+                    val attribute = 0x23c0 or (vRam and 0xc00) or ((vRam ushr 4) and 0x38) or ((vRam ushr 2) and 0x7)
+                    // We are rendering the upper left tile, so we use bits 0-1 to get the palette
+                    if (vRamAddress.tileX % 4 < 2 && vRamAddress.tileY % 4 < 2)
+                            shiftRegister.attributeTableByte = graphics.ppuReadByte(attribute) and 0x3
+                    // We are rendering the upper right tile, so we use bits 2-3 to get the palette
+                    else if (vRamAddress.tileX % 4 >= 2 && vRamAddress.tileY % 4 < 2)
+                        shiftRegister.attributeTableByte = (graphics.ppuReadByte(attribute) and 0xc) ushr 2
+                    // We are rendering the lower left tile, so we use bits 4-5 to get the palette
+                    else if (vRamAddress.tileX % 4 < 2 && vRamAddress.tileY % 4 >= 2)
+                        shiftRegister.attributeTableByte = (graphics.ppuReadByte(attribute) and 0x30) ushr 4
+                    // We are rendering the lower right tile, so we use bits 6-7 to get the palette
+                    else if(vRamAddress.tileX % 4 >= 2 && vRamAddress.tileY % 4 >= 2)
+                        shiftRegister.attributeTableByte = (graphics.ppuReadByte(attribute) and 0xc0) ushr 6
                 }
 
                 5 -> {
@@ -95,12 +105,16 @@ class PPU(private val graphics: SystemBus) {
             // If we are on the 7th scanline of a tile then we have finished that tile
             if (7 == vRamAddress.tileScanline) {
                 // So we move to the next tile in the name table and reset the scanline
-                vRamAddress.tileY = vRamAddress.tileY + 1
+                vRamAddress.tileY++
                 vRamAddress.tileScanline = 0
                 // However if we are moving to another name table then reset the tileY and flip the name table
-                if (29 < vRamAddress.tileY) {
+                if (vRamAddress.tileY == 30) {
                     vRamAddress.tileY = 0
                     vRamAddress.nameTableY = if (vRamAddress.nameTableY == 0) 1 else 0
+                }
+                // If we are in the attribute table reset tileY but do not switch name table bit
+                else if (vRamAddress.tileY == 32) {
+                    vRamAddress.tileY = 0
                 }
             }
             // Otherwise we are still using this tile on the next scanline
@@ -130,7 +144,7 @@ class PPU(private val graphics: SystemBus) {
             // If we are on the visible part of the frame and rendering background then draw the background pixel
             if (mask.showBackground) {
                 // Do this by first getting the palette and pixel from the shift register
-                val palette = shiftRegister.getCurrentPalette(tilePixel)
+                val palette = shiftRegister.getCurrentPalette()
                 val bitPlane = shiftRegister.getCurrentPixel(tilePixel)
                 // We then plug those into the nes palette to get our color and set the pixel!
                 val (r, g, b) = NES.palette[readPalette(palette, bitPlane)] ?: Triple(0, 0, 0)

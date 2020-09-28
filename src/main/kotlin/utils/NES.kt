@@ -90,7 +90,12 @@ class NES(private val mainWindow: MainWindow) : Runnable {
             for (cyc in 0 until 3)
                 ppu.emulateCycle()
             // Then emulate one CPU cycle
-            cpu.emulateCycle()
+            if (system.spriteDMA && cpu.totalCycles % 2 == 0)
+                system.performDMA()
+            else if (system.spriteDMA)
+                cpu.totalCycles++
+            else
+                cpu.emulateCycle()
             // Then we need to check if the PPU has emitted an NMI request abd execute one if it did
             if (ppu.emitNMI) {
                 cpu.nmi()

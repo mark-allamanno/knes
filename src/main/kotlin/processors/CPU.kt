@@ -254,6 +254,7 @@ class CPU(private val system: SystemBus) {
         system.cpuWriteHalfWord(0x100 + sp, pc)
         sp = (sp - 2) and 0xff
 
+        status.interruptDisable = true
         system.cpuWriteByte(0x100 + sp, status.encode())
         sp = (sp - 1) and 0xff
 
@@ -563,27 +564,6 @@ class CPU(private val system: SystemBus) {
         stall = 6
     }
 
-    private fun asl() {
-        val shifted: Int
-        val operand: Int
-
-        if (address == null) {
-            operand = regA and 0xff
-            shifted = (operand shl 1) and 0xff
-            regA = shifted
-        } else {
-            operand = system.cpuReadByte(address!!)
-            shifted = (operand shl 1) and 0xff
-            system.cpuWriteByte(address!!, shifted)
-        }
-
-        status.carry = (operand ushr 7) == 1
-        status.zero = (shifted == 0)
-        status.negative = (shifted ushr 7) == 1
-
-        postprocess()
-    }
-
     private fun lsr() {
         val shifted: Int
         val operand: Int
@@ -671,6 +651,21 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
+    private fun adc() {
+        val operand = system.cpuReadByte(address!!)
+        val carry = if (status.carry) 1 else 0
+
+        val tmp = regA + operand + carry
+
+        status.carry = tmp > 255
+        status.zero = (tmp and 0xff) == 0
+        status.overflow = ((regA xor operand) and 0x80) == 0 && ((tmp xor regA) and 0x80) != 0
+        status.negative = (tmp ushr 7) == 1
+
+        regA = tmp and 0xff
+        postprocess()
+    }
+
     private fun and() {
         val operand = system.cpuReadByte(address!!)
 
@@ -682,60 +677,33 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
+    private fun asl() {
+        val shifted: Int
+        val operand: Int
+
+        if (address == null) {
+            operand = regA and 0xff
+            shifted = (operand shl 1) and 0xff
+            regA = shifted
+        } else {
+            operand = system.cpuReadByte(address!!)
+            shifted = (operand shl 1) and 0xff
+            system.cpuWriteByte(address!!, shifted)
+        }
+
+        status.carry = (operand ushr 7) == 1
+        status.zero = (shifted == 0)
+        status.negative = (shifted ushr 7) == 1
+
+        postprocess()
+    }
+
     private fun bit() {
         val operand = system.cpuReadByte(address!!)
 
         status.zero = (operand and regA) == 0
         status.overflow = (operand and 0x40) != 0
         status.negative = (operand and 0x80) != 0
-
-        postprocess()
-    }
-
-    private fun sta() {
-
-        system.cpuWriteByte(address!!, regA)
-
-        postprocess()
-    }
-
-    private fun stx() {
-
-        system.cpuWriteByte(address!!, regX)
-
-        postprocess()
-    }
-
-    private fun sty() {
-
-        system.cpuWriteByte(address!!, regY)
-
-        postprocess()
-    }
-
-    private fun lda() {
-        regA = system.cpuReadByte(address!!)
-
-        status.zero = regA == 0
-        status.negative = (regA ushr 7) == 1
-
-        postprocess()
-    }
-
-    private fun ldx() {
-        regX = system.cpuReadByte(address!!)
-
-        status.zero = regX == 0
-        status.negative = (regX ushr 7) == 1
-
-        postprocess()
-    }
-
-    private fun ldy() {
-        regY = system.cpuReadByte(address!!)
-
-        status.zero = regY == 0
-        status.negative = (regY ushr 7) == 1
 
         postprocess()
     }
@@ -773,6 +741,17 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
+    private fun dec() {
+        val operand = (system.cpuReadByte(address!!) - 1) and 0xff
+
+        system.cpuWriteByte(address!!, operand)
+
+        status.zero = operand == 0
+        status.negative = (operand ushr 7) == 1
+
+        postprocess()
+    }
+
     private fun dex() {
         regX = (regX - 1) and 0xff
 
@@ -787,6 +766,44 @@ class CPU(private val system: SystemBus) {
 
         status.zero = regY == 0
         status.negative = (regY ushr 7) == 1
+
+        postprocess()
+    }
+
+    private fun lda() {
+        regA = system.cpuReadByte(address!!)
+
+        status.zero = regA == 0
+        status.negative = (regA ushr 7) == 1
+
+        postprocess()
+    }
+
+    private fun ldx() {
+        regX = system.cpuReadByte(address!!)
+
+        status.zero = regX == 0
+        status.negative = (regX ushr 7) == 1
+
+        postprocess()
+    }
+
+    private fun ldy() {
+        regY = system.cpuReadByte(address!!)
+
+        status.zero = regY == 0
+        status.negative = (regY ushr 7) == 1
+
+        postprocess()
+    }
+
+    private fun inc() {
+        val operand = (system.cpuReadByte(address!!) + 1) and 0xff
+
+        system.cpuWriteByte(address!!, operand)
+
+        status.zero = operand == 0
+        status.negative = (operand ushr 7) == 1
 
         postprocess()
     }
@@ -809,24 +826,56 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
-    private fun inc() {
-        val operand = (system.cpuReadByte(address!!) + 1) and 0xff
-
-        system.cpuWriteByte(address!!, operand)
-
-        status.zero = operand == 0
-        status.negative = (operand ushr 7) == 1
+    private fun pha() {
+        system.cpuWriteByte(0x100 + sp, regA)
+        sp = (sp - 1) and 0xff
 
         postprocess()
     }
 
-    private fun dec() {
-        val operand = (system.cpuReadByte(address!!) - 1) and 0xff
+    private fun php() {
+        system.cpuWriteByte(0x100 + sp, status.encode())
+        sp = (sp - 1) and 0xff
 
-        system.cpuWriteByte(address!!, operand)
+        postprocess()
+    }
 
-        status.zero = operand == 0
-        status.negative = (operand ushr 7) == 1
+    private fun pla() {
+        regA = system.cpuReadByte(0x100 + sp + 1)
+        sp = (sp + 1) and 0xff
+
+        status.zero = regA == 0
+        status.negative = (regA ushr 7) == 1
+
+        postprocess()
+    }
+
+    private fun plp() {
+        val state = system.cpuReadByte(0x100 + sp + 1)
+        sp = (sp + 1) and 0xff
+
+        status.decode(state)
+
+        postprocess()
+    }
+
+    private fun sta() {
+
+        system.cpuWriteByte(address!!, regA)
+
+        postprocess()
+    }
+
+    private fun stx() {
+
+        system.cpuWriteByte(address!!, regX)
+
+        postprocess()
+    }
+
+    private fun sty() {
+
+        system.cpuWriteByte(address!!, regY)
 
         postprocess()
     }
@@ -849,6 +898,15 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
+    private fun tay() {
+        regY = regA
+
+        status.zero = regY == 0
+        status.negative = (regY ushr 7) == 1
+
+        postprocess()
+    }
+
     private fun tsx() {
         regX = sp
 
@@ -863,69 +921,12 @@ class CPU(private val system: SystemBus) {
         postprocess()
     }
 
-    private fun tay() {
-        regY = regA
-
-        status.zero = regY == 0
-        status.negative = (regY ushr 7) == 1
-
-        postprocess()
-    }
-
     private fun tya() {
         regA = regY
 
         status.zero = regA == 0
         status.negative = (regA ushr 7) == 1
 
-        postprocess()
-    }
-
-    private fun pha() {
-        system.cpuWriteByte(0x100 + sp, regA)
-        sp = (sp - 1) and 0xff
-
-        postprocess()
-    }
-
-    private fun pla() {
-        regA = system.cpuReadByte(0x100 + sp + 1)
-        sp = (sp + 1) and 0xff
-
-        status.zero = regA == 0
-        status.negative = (regA ushr 7) == 1
-
-        postprocess()
-    }
-
-    private fun php() {
-        system.cpuWriteByte(0x100 + sp, status.encode())
-        sp = (sp - 1) and 0xff
-
-        postprocess()
-    }
-
-    private fun plp() {
-        val state = system.cpuReadByte(0x100 + sp + 1)
-        sp = (sp + 1) and 0xff
-
-        status.decode(state)
-
-        postprocess()
-    }
-
-    private fun adc() {
-        val operand = system.cpuReadByte(address!!)
-        val carry = if (status.carry) 1 else 0
-
-        val tmp = regA + operand + carry
-
-        status.carry = tmp > 255
-        status.zero = (tmp and 0xff) == 0
-        status.overflow = ((regA xor operand) and 0x80) == 0 && ((tmp xor regA) and 0x80) != 0
-        status.negative = (tmp ushr 7) == 1
-
-        regA = tmp and 0xff
         postprocess()
     }
 

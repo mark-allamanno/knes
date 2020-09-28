@@ -261,36 +261,26 @@ class ShiftRegister {
     var patternTableLSB = 0
     var patternTableMSB = 0
 
-    private var attributeLSBShift = 0
-    private var attributeMSBShift = 0
     private var patternLSBShift = 0
     private var patternMSBShift = 0
+    private var attributeByte = Array(2) { 0 }
 
     fun shiftRegisterBits() {
         // Just shift all of the registers left by 1 and make sure there is no overflow!
-        attributeLSBShift = (attributeLSBShift shl 1) and 0xffff
-        attributeMSBShift = (attributeMSBShift shl 1) and 0xffff
         patternLSBShift = (patternLSBShift shl 1) and 0xffff
         patternMSBShift = (patternMSBShift shl 1) and 0xffff
     }
 
     fun loadNextTile() {
-        // When we load a new tile we split up the attribute byte into its lsb and msb
-        val lsb = if (attributeTableByte and 0x1 == 0) 0 else 0xff
-        val msb = if (attributeTableByte and 0x2 == 0) 0 else 0xff
-        // We then merge the lower byte of the shift registers with the new temp bytes we loaded
-        attributeLSBShift = (attributeLSBShift and 0xff00) or lsb
-        attributeMSBShift = (attributeMSBShift and 0xff00) or msb
+        // We then shift the attribute bytes forward and merge the lower bits of the shift registers with the new bytes
+        attributeByte[0] = attributeByte[1]
+        attributeByte[1] = attributeTableByte
         patternLSBShift = (patternLSBShift and 0xff00) or (patternTableLSB and 0xff)
         patternMSBShift = (patternMSBShift and 0xff00) or (patternTableMSB and 0xff)
     }
 
-    fun getCurrentPalette(fineX: Int): Int {
-        val mask = 0x8000 ushr fineX
-        // Using a right shift we use a mask to get the msb and lsb of the attribute table from the shift registers
-        val lsb = if ((attributeLSBShift and mask) != 0) 1 else 0
-        val msb = if ((attributeMSBShift and mask) != 0) 2 else 0
-        return msb or lsb
+    fun getCurrentPalette(): Int {
+        return attributeByte[0]     // Return the current attribute byte
     }
 
     fun getCurrentPixel(fineX: Int): Int {
