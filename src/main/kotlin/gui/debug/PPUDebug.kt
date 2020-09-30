@@ -126,7 +126,7 @@ class PPUDebug(nes: NES) : DebugWindow(nes) {
         // Then draw the 4 colors in the specified palette
         for (color in 0 until 4) {
             // Get the color in hex from the standard NES palette and then convert that into RGB values from the map
-            val hexColor = nes.ppu.readPalette(palette, color)
+            val hexColor = nes.system.ppuReadPalette(palette, color)
             val (r, g, b) = NES.palette[hexColor] ?: Triple(0, 0, 0)
             // Set the fill and stroke to the correct colors
             canvas.graphicsContext2D.fill = Color.rgb(r, g, b)

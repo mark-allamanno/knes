@@ -14,7 +14,7 @@ class Cartridge(val filename: String, private val system: SystemBus) {
     val characterRomBanks: Int                      // The number of character rom banks specified in the header
     val trainerPresent: Boolean                     // Boolean value to tell if a trainer is present in the rom
     val mirrorMode: Mirroring                       // The mirroring mode that the cartridge uses for its name tables
-    val mapper: Mapper                              // The mapper used to interpret the actual addresses given to the processors.CPU
+    val mapper: Mapper                              // The mapper used to interpret the actual addresses given to the CPU
 
     init {
         // Get the un-parsed rom date and the header (first 16 bytes) for the file
@@ -27,7 +27,7 @@ class Cartridge(val filename: String, private val system: SystemBus) {
         programRomBanks = (header[9] and 0xf shl 4) or header[4]
         characterRomBanks = (header[9] and 0xf0 shl 4) or header[5]
         trainerPresent = (header[6] and 0x4) == 1
-        mirrorMode = if ((header[6] and 0x1) == 0) Mirroring.VERTICAL else Mirroring.HORIZONTAL
+        mirrorMode = if ((header[6] and 0x1) == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
         // Then we instanciate the mapper for the given game before loading the rom
         mapper = readMapper()
     }

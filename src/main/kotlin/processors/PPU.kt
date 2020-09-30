@@ -9,17 +9,22 @@ import kotlin.math.pow
 
 class PPU(private val graphics: SystemBus) {
 
-    val control = ControlRegister()
     private val mask = MaskRegister()
     private val status = StatusRegisterPPU()
+    val control = ControlRegister()
+
     private var vRamAddress = VRamAddress()
     private var tRamAddress = VRamAddress()
     private var shiftRegister = ShiftRegister()
+    private var oamAddress = 0
+
     private var tilePixel = 0
     private var writeLatch = true
     private var readBuffer = 0
+
     private var scanline = 261
     private var scanlinePixel = 1
+
     var emitNMI = false
     var frame = WritableImage(256, 240)
 
@@ -145,9 +150,9 @@ class PPU(private val graphics: SystemBus) {
             if (mask.showBackground) {
                 // Do this by first getting the palette and pixel from the shift register
                 val palette = shiftRegister.getCurrentPalette()
-                val bitPlane = shiftRegister.getCurrentPixel(tilePixel)
+                val bitPlane = shiftRegister.getCurrentBitPlane(tilePixel)
                 // We then plug those into the nes palette to get our color and set the pixel!
-                val (r, g, b) = NES.palette[readPalette(palette, bitPlane)] ?: Triple(0, 0, 0)
+                val (r, g, b) = NES.palette[graphics.ppuReadPalette(palette, bitPlane)] ?: Triple(0, 0, 0)
                 frame.pixelWriter.setColor(scanlinePixel, scanline, Color.rgb(r, g, b))
             }
         }
@@ -188,10 +193,9 @@ class PPU(private val graphics: SystemBus) {
                 tRamAddress.nameTableY = (value and 0x2) ushr 1
             }
 
-            1 -> {
-                // This one is simple we just decode the value into the register!
-                mask.decode(value)
-            }
+            1 -> mask.decode(value)
+            3 ->  oamAddress = value and 0xff
+            4 -> graphics.ppuWriteOAM(oamAddress, value)
 
             5 -> {
                 if (writeLatch) {
@@ -246,6 +250,8 @@ class PPU(private val graphics: SystemBus) {
                 return state
             }
 
+            4 -> return graphics.ppuReadOAM(oamAddress)
+
             7 -> {
                 // A read from the PPU actually tasks 2 CPU cycles so we need to buffer then in a variable and then
                 // increment the loopy v register
@@ -266,23 +272,18 @@ class PPU(private val graphics: SystemBus) {
         val bitPlaneMSB = Array(8) { graphics.ppuReadByte(address + it + 8) }
         val result = Array(8) { Array(8) { 0 } }
         // Then iterate over every bit of every byte to combine the lsb and msb
-        for (i in 0 until 8) {
-            for (b in 0 until 8) {
+        for (byte in 0 until 8) {
+            for (bit in 0 until 8) {
                 // Use a power of 2 to get each bit in the byte
-                val mask = 2.0.pow(b).toInt()
+                val mask = 2.0.pow(bit).toInt()
                 // Then grab the lsb and msb from the byte and shift them over to the 1's place
-                val lsb = (bitPlaneLSB[i] and mask) ushr b
-                val msb = (bitPlaneMSB[i] and mask) ushr b
+                val lsb = (bitPlaneLSB[byte] and mask) ushr bit
+                val msb = (bitPlaneMSB[byte] and mask) ushr bit
                 // Finally combine the lsb and msb together and place then in the resulting array
-                result[i][7 - b] = (msb shl 1) or lsb
+                result[byte][7 - bit] = (msb shl 1) or lsb
             }
         }
         return result       // Then return the resulting 8x8 array
-    }
-
-    fun readPalette(palette: Int, bitPlane: Int): Int {
-        // Read the palette from the graphics memory, palettes start at 0x3f00 and there are 4 colors to a palette
-        return graphics.ppuReadByte(0x3f00 + (4 * palette) + bitPlane)
     }
 
     fun reset() {
@@ -300,4 +301,19 @@ class PPU(private val graphics: SystemBus) {
         scanline = 261
         scanlinePixel = -1
     }
+
+    fun invertHorizontal(invertRow: Int): Int {
+
+        var result = 0
+        for (bit in 0 until 4) {
+
+            val lowBitInvert = (invertRow and 2.0.pow(bit).toInt()) shl (7 - (bit * 2))
+            val highBitInvert = (invertRow and 2.0.pow(7-bit).toInt()) ushr (7 - (bit * 2))
+            
+            result = result or highBitInvert or lowBitInvert
+        }
+        return result
+    }
+
+
 }

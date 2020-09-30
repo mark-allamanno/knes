@@ -2,23 +2,23 @@ package utils
 
 import gui.MainWindow
 import javafx.application.Platform
-import javafx.scene.canvas.Canvas
 import memory.Cartridge
 import memory.SystemBus
 import processors.CPU
 import processors.PPU
+import java.util.concurrent.Executors.newScheduledThreadPool
 import java.util.concurrent.Executors.newSingleThreadScheduledExecutor
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 class NES(private val mainWindow: MainWindow) : Runnable {
 
-    val system = SystemBus(this)                            // The system memory for the NES
+    val system = SystemBus(this)                                // The system memory for the NES
     val cpu = CPU(system)                                       // The system CPU for the NES
     val ppu = PPU(system)                                       // The system PPU for the NES
     var controllerState = 0
-    lateinit var cartridge: Cartridge                           // The currently inserted cartridge for the NES system
-    private val logger = Logger(this)                       // The logger class that enables us to write to a log file
+    private lateinit var cartridge: Cartridge                   // The currently inserted cartridge for the NES system
+    private val logger = Logger(this)                           // The logger class that enables us to write to a log file
     private lateinit var timer: ScheduledExecutorService        // The timer that will continuously execute our system cycle code
 
     companion object {
@@ -89,13 +89,15 @@ class NES(private val mainWindow: MainWindow) : Runnable {
             // The PPU runs 3x as fast as the CPU so emulate 3 cycles for every 1 CPU cycle
             for (cyc in 0 until 3)
                 ppu.emulateCycle()
-            // Then emulate one CPU cycle
-            if (system.spriteDMA && cpu.totalCycles % 2 == 0)
-                system.performDMA()
-            else if (system.spriteDMA)
-                cpu.totalCycles++
-            else
+            // Then emulate one CPU cycle if we are not in a sprite DMA
+            if (!system.spriteDMA)
                 cpu.emulateCycle()
+            // If we are we want to wait until an even clock cycle to start
+            else if (system.spriteDMA && cpu.totalCycles % 2 == 0)
+                system.performDMA()
+            // So if we are in DMA but on an odd cycle run one dummy cycle
+            else
+                cpu.totalCycles++
             // Then we need to check if the PPU has emitted an NMI request abd execute one if it did
             if (ppu.emitNMI) {
                 cpu.nmi()
@@ -114,16 +116,15 @@ class NES(private val mainWindow: MainWindow) : Runnable {
 
     fun insertCartridge(filename: String) {
         try {
-            val cartridge = Cartridge(filename, system)
+            val newCartridge = Cartridge(filename, system)
             // Then insert, load, and assign the cartridge to the class
-            system.insertCartridge(cartridge)
-            cartridge.loadToBuses()
-            this.cartridge = cartridge
+            system.insertCartridge(newCartridge)
+            cartridge = newCartridge
             // Reset the ppu and cpu
             cpu.reset()
             ppu.reset()
             // Log the cartridge change before we start the emulation
-            logger.logCartridgeChange(cartridge)
+            logger.logCartridgeChange(newCartridge)
         } catch (e: NESException) {
             // If we encounter an error then show an error message and stop execution
             Platform.runLater { mainWindow.errorMessage(e) }
@@ -134,12 +135,12 @@ class NES(private val mainWindow: MainWindow) : Runnable {
     fun start() {
         if (::cartridge.isInitialized) {
             // Create a new scheduler instance whose thread is set to high priority to get the correct performance
-            timer = newSingleThreadScheduledExecutor { runnable ->
+            timer = newScheduledThreadPool(2) { runnable ->
                 val thread = Thread(runnable, "NES Backend Thread")
                 thread.priority = Thread.MAX_PRIORITY
                 thread  // Returning the thread implicitly
             }
-            timer.scheduleAtFixedRate(this, 0, 562, TimeUnit.NANOSECONDS)
+            timer.scheduleAtFixedRate(this, 0, 560, TimeUnit.NANOSECONDS)
         }
     }
 

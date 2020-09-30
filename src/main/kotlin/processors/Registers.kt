@@ -283,7 +283,7 @@ class ShiftRegister {
         return attributeByte[0]     // Return the current attribute byte
     }
 
-    fun getCurrentPixel(fineX: Int): Int {
+    fun getCurrentBitPlane(fineX: Int): Int {
         val mask = 0x8000 ushr fineX
         // Using a right shift we use a mask to get the msb and lsb of the but plane from the shift registers
         val lsb = if ((patternLSBShift and mask) != 0) 1 else 0

@@ -58,7 +58,7 @@ abstract class DebugWindow(protected val nes: NES) : Stage() {
             for (y in 0 until 8) {
                 for (x in 0 until 8) {
                     // Get the hex color form the palette and pixel. Then get the RGB values from this hex color and write it
-                    val hexColor = nes.ppu.readPalette(activePalette, bitPlane[y][x])
+                    val hexColor = nes.system.ppuReadPalette(activePalette, bitPlane[y][x])
                     val (r, g, b) = NES.palette[hexColor] ?: Triple(0, 0, 0)
                     sprites[i].pixelWriter.setColor(x, y, Color.rgb(r, g, b))
                 }

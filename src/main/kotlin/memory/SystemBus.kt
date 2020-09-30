@@ -115,6 +115,19 @@ class SystemBus(private val nes: NES) {
         }
     }
 
+    fun ppuReadOAM(address: Int): Int {
+        return oamData[address / 4][address % 4].toInt() and 0xff
+    }
+
+    fun ppuWriteOAM(address: Int, value: Int) {
+        oamData[address / 4][address % 4] = (value and 0xff).toByte()
+    }
+
+    fun ppuReadPalette(palette: Int, bitPlane: Int): Int {
+        // Read the palette from the graphics memory, palettes start at 0x3f00 and there are 4 colors to a palette
+        return graphics[0x3f00 + (4 * palette) + bitPlane].toInt() and 0xff
+    }
+
     fun performDMA() {
         // On the read cycle of the dma latch we just read the data pointed to byte the dmaAddress into the buffer and increment it
         if (dmaLatch) {
@@ -152,11 +165,13 @@ class SystemBus(private val nes: NES) {
         }
     }
 
-    fun insertCartridge(cartridge: Cartridge) {
+    fun insertCartridge(newCartridge: Cartridge) {
         // Then assign the new cartridge to the current one
-        this.cartridge = cartridge
+        cartridge = newCartridge
         // Fill both of the NES' RAM buses with 0's
         system.fill(0)
         graphics.fill(0)
+        // Finally load the cartridge to the system memory
+        cartridge.loadToBuses()
     }
 }

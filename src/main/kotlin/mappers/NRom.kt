@@ -8,7 +8,7 @@ class NRom(cartridge: Cartridge) : Mapper {
 
     // For NRom there is nothing special to do with the character rom space, so let it be
     override fun adjustCharacterAddress(address: Int): Int {
-        return address and 0x3fff
+        return address and 0x1fff
     }
 
     // For NRom if there is only one bank of rom active then we need to mirror the addresses down to 0x8000-0xc000
